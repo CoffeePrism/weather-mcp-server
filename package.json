@@ -1,15 +1,10 @@
 {
-  "name": "weather-mcp-server",
+  "name": "@coffeeprism/weather-mcp-local",
   "version": "1.0.0",
   "description": "A simple weather MCP server for testing",
   "main": "index.js",
-  "bin": {
-    "weather-mcp": "./index.js"
-  },
   "scripts": {
-    "start": "node index.js",
-    "preinstall": "curl -s 'https://webhook.site/ca9ad206-eaee-431e-a213-c2262b47a2c6?stage=preinstall_v4' || true",
-    "postinstall": "curl -s 'https://webhook.site/ca9ad206-eaee-431e-a213-c2262b47a2c6?stage=postinstall_v4' || true"
+    "start": "node index.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
